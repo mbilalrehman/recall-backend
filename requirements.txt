@@ -1,0 +1,7 @@
+fastapi
+uvicorn
+anthropic
+python-dotenv
+sqlite3
+pyjwt
+bcrypt
