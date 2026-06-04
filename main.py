@@ -8,8 +8,12 @@ import bcrypt
 import platform
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
+import resend
+import secrets
 
 load_dotenv()
+resend.api_key = os.getenv("re_AVTiNYTf_MNafHirFxYg4cKowQZgUcLSF")
+FRONTEND_URL = "http://100.53.1.66:8000"
 
 app = FastAPI(title="Recall API")
 
@@ -29,6 +33,8 @@ def get_db():
                  password TEXT,
                  plan TEXT DEFAULT 'free',
                  queries_used INTEGER DEFAULT 0,
+                 is_verified INTEGER DEFAULT 0,
+                 verification_token TEXT,
                  created_at DATETIME DEFAULT CURRENT_TIMESTAMP)''')
     conn.execute('''CREATE TABLE IF NOT EXISTS memory
                  (user_id INTEGER,
@@ -71,24 +77,68 @@ def get_user_id(authorization: str = Header(None)):
 def signup(req: SignupRequest):
     conn = get_db()
     hashed = bcrypt.hashpw(req.password.encode(), bcrypt.gensalt())
+    verification_token = secrets.token_urlsafe(32)
     try:
-        cursor = conn.execute(
-            "INSERT INTO users (email, password) VALUES (?, ?)",
-            (req.email, hashed.decode())
+        conn.execute(
+            "INSERT INTO users (email, password, verification_token) VALUES (?, ?, ?)",
+            (req.email, hashed.decode(), verification_token)
         )
         conn.commit()
-        token = create_token(cursor.lastrowid)
-        return {"token": token, "message": "Welcome to Recall!"}
+
+        cursor = conn.execute(
+            "SELECT id FROM users WHERE email=?", (req.email,)
+        )
+        user_id = cursor.fetchone()[0]
+
+        # Send verification email
+        verify_url = f"{FRONTEND_URL}/verify?token={verification_token}"
+        resend.Emails.send({
+            "from": "Recall <onboarding@resend.dev>",
+            "to": req.email,
+            "subject": "Verify your Recall account",
+            "html": f"""
+            <h2>Welcome to Recall!</h2>
+            <p>Click the link below to verify your account:</p>
+            <a href="{verify_url}" style="background:#2563EB;color:white;padding:12px 24px;border-radius:6px;text-decoration:none;">
+                Verify Email
+            </a>
+            <p>If you did not create this account, ignore this email.</p>
+            """
+        })
+
+        token = create_token(user_id)
+        return {"message": "Account created! Check your email to verify.", "token": token}
+
     except sqlite3.IntegrityError:
         raise HTTPException(status_code=400, detail="Email already exists")
     finally:
         conn.close()
 
+@app.get("/verify")
+def verify_email(token: str):
+    conn = get_db()
+    cursor = conn.execute(
+        "SELECT id FROM users WHERE verification_token=?", (token,)
+    )
+    user = cursor.fetchone()
+
+    if not user:
+        raise HTTPException(status_code=400, detail="Invalid verification token")
+
+    conn.execute(
+        "UPDATE users SET is_verified=1, verification_token=NULL WHERE id=?",
+        (user[0],)
+    )
+    conn.commit()
+    conn.close()
+
+    return {"message": "Email verified! You can now use Recall."}
+
 @app.post("/login")
 def login(req: LoginRequest):
     conn = get_db()
     cursor = conn.execute(
-        "SELECT id, password, plan, queries_used FROM users WHERE email=?",
+        "SELECT id, password, plan, queries_used, is_verified FROM users WHERE email=?",
         (req.email,)
     )
     user = cursor.fetchone()
@@ -99,6 +149,9 @@ def login(req: LoginRequest):
 
     if not bcrypt.checkpw(req.password.encode(), user[1].encode()):
         raise HTTPException(status_code=401, detail="Wrong password")
+
+    if not user[4]:
+        raise HTTPException(status_code=403, detail="Please verify your email first")
 
     token = create_token(user[0])
     return {
