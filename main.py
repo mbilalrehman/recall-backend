@@ -16,7 +16,7 @@ import stripe
 load_dotenv()
 
 stripe.api_key = os.getenv("STRIPE_SECRET_KEY")
-STRIPE_PRICE_ID = "prod_UelEr64ChkbOA4"
+STRIPE_PRICE_ID = "price_1TfRiDIjAxibchSEuB7L0Iy8"
 
 resend.api_key = os.getenv("re_AVTiNYTf_MNafHirFxYg4cKowQZgUcLSF")
 FRONTEND_URL = "http://100.53.1.66:8000"
