@@ -11,8 +11,13 @@ from datetime import datetime, timedelta
 from dotenv import load_dotenv
 import resend
 import secrets
+import stripe
 
 load_dotenv()
+
+stripe.api_key = os.getenv("STRIPE_SECRET_KEY")
+STRIPE_PRICE_ID = "prod_UelEr64ChkbOA4"
+
 resend.api_key = os.getenv("re_AVTiNYTf_MNafHirFxYg4cKowQZgUcLSF")
 FRONTEND_URL = "http://100.53.1.66:8000"
 
@@ -441,3 +446,46 @@ def ban_user(req: BanRequest, _ = Depends(admin_auth)):
     conn.commit()
     conn.close()
     return {"message": "Done"}
+
+
+# ══════════════════════════════════════
+# STRIPE PAYMENTS
+# ══════════════════════════════════════
+
+@app.post("/create-checkout")
+def create_checkout(user_id: int = Depends(get_user_id)):
+    try:
+        session = stripe.checkout.Session.create(
+            payment_method_types=["card"],
+            line_items=[{
+                "price": STRIPE_PRICE_ID,
+                "quantity": 1,
+            }],
+            mode="subscription",
+            success_url="http://100.53.1.66:8000/payment-success?session_id={CHECKOUT_SESSION_ID}",
+            cancel_url="http://100.53.1.66:8000/payment-cancel",
+            metadata={"user_id": str(user_id)}
+        )
+        return {"checkout_url": session.url}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.get("/payment-success")
+def payment_success(session_id: str):
+    try:
+        session = stripe.checkout.Session.retrieve(session_id)
+        user_id = int(session.metadata.get("user_id"))
+        conn = get_db()
+        conn.execute(
+            "UPDATE users SET plan='pro' WHERE id=?",
+            (user_id,)
+        )
+        conn.commit()
+        conn.close()
+        return {"message": "Payment successful! You are now Pro!"}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.get("/payment-cancel")
+def payment_cancel():
+    return {"message": "Payment cancelled."}
