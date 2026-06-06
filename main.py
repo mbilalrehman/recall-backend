@@ -1,4 +1,5 @@
 from fastapi import FastAPI, HTTPException, Depends, Header
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 import anthropic
 import sqlite3
