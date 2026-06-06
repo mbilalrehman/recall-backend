@@ -489,7 +489,7 @@ def payment_success(session_id: str):
         )
         conn.commit()
         conn.close()
-        return {"message": "Payment successful! You are now Pro!"}
+        return {"message": "✅ Payment successful! You are now Pro!", "plan": "pro"}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
