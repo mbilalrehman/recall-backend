@@ -29,15 +29,13 @@ client = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
 def get_db():
     conn = sqlite3.connect('recall.db')
     conn.execute('''CREATE TABLE IF NOT EXISTS users
-             (id INTEGER PRIMARY KEY AUTOINCREMENT,
-             email TEXT UNIQUE,
-             password TEXT,
-             plan TEXT DEFAULT 'free',
-             queries_used INTEGER DEFAULT 0,
-             is_verified INTEGER DEFAULT 0,
-             is_banned INTEGER DEFAULT 0,
-             verification_token TEXT,
-             created_at DATETIME DEFAULT CURRENT_TIMESTAMP)''')
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                 email TEXT UNIQUE,
+                 password TEXT,
+                 plan TEXT DEFAULT 'free',
+                 queries_used INTEGER DEFAULT 0,
+                 is_banned INTEGER DEFAULT 0,
+                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP)''')
     conn.execute('''CREATE TABLE IF NOT EXISTS memory
                  (user_id INTEGER,
                  query TEXT,
@@ -79,38 +77,15 @@ def get_user_id(authorization: str = Header(None)):
 def signup(req: SignupRequest):
     conn = get_db()
     hashed = bcrypt.hashpw(req.password.encode(), bcrypt.gensalt())
-    verification_token = secrets.token_urlsafe(32)
     try:
-        conn.execute(
-            "INSERT INTO users (email, password, verification_token) VALUES (?, ?, ?)",
-            (req.email, hashed.decode(), verification_token)
+        cursor = conn.execute(
+            "INSERT INTO users (email, password) VALUES (?, ?)",
+            (req.email, hashed.decode())
         )
         conn.commit()
-
-        cursor = conn.execute(
-            "SELECT id FROM users WHERE email=?", (req.email,)
-        )
-        user_id = cursor.fetchone()[0]
-
-        # Send verification email
-        verify_url = f"{FRONTEND_URL}/verify?token={verification_token}"
-        resend.Emails.send({
-            "from": "Recall <onboarding@resend.dev>",
-            "to": req.email,
-            "subject": "Verify your Recall account",
-            "html": f"""
-            <h2>Welcome to Recall!</h2>
-            <p>Click the link below to verify your account:</p>
-            <a href="{verify_url}" style="background:#2563EB;color:white;padding:12px 24px;border-radius:6px;text-decoration:none;">
-                Verify Email
-            </a>
-            <p>If you did not create this account, ignore this email.</p>
-            """
-        })
-
+        user_id = cursor.lastrowid
         token = create_token(user_id)
-        return {"message": "Account created! Check your email to verify.", "token": token}
-
+        return {"token": token, "message": "Welcome to Recall!"}
     except sqlite3.IntegrityError:
         raise HTTPException(status_code=400, detail="Email already exists")
     finally:
