@@ -455,8 +455,15 @@ def ban_user(req: BanRequest, _ = Depends(admin_auth)):
 @app.post("/create-checkout")
 def create_checkout(user_id: int = Depends(get_user_id)):
     try:
+        # User email lo
+        conn = get_db()
+        cursor = conn.execute("SELECT email FROM users WHERE id=?", (user_id,))
+        user = cursor.fetchone()
+        conn.close()
+
         session = stripe.checkout.Session.create(
             payment_method_types=["card"],
+            customer_email=user[0],  # email add karo
             line_items=[{
                 "price": STRIPE_PRICE_ID,
                 "quantity": 1,
