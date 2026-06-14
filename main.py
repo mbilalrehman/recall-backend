@@ -1,6 +1,7 @@
 from fastapi import FastAPI, HTTPException, Depends, Header
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
+from fastapi.responses import HTMLResponse
 import anthropic
 import sqlite3
 import os
@@ -477,7 +478,8 @@ def create_checkout(user_id: int = Depends(get_user_id)):
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-@app.get("/payment-success")
+
+@app.get("/payment-success", response_class=HTMLResponse)
 def payment_success(session_id: str):
     try:
         session = stripe.checkout.Session.retrieve(session_id)
@@ -489,7 +491,30 @@ def payment_success(session_id: str):
         )
         conn.commit()
         conn.close()
-        return {"message": "✅ Payment successful! You are now Pro!", "plan": "pro"}
+        return """
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Payment Successful</title>
+            <style>
+                body { font-family: Arial; background: #0f172a; color: white; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+                .box { text-align: center; background: #1e293b; padding: 60px; border-radius: 16px; }
+                h1 { color: #4ade80; font-size: 48px; }
+                p { color: #94a3b8; font-size: 18px; margin: 20px 0; }
+                .badge { background: #14532d; color: #4ade80; padding: 8px 24px; border-radius: 20px; font-size: 16px; font-weight: bold; }
+            </style>
+        </head>
+        <body>
+            <div class="box">
+                <h1>🎉</h1>
+                <h2 style="color:#4ade80">Payment Successful!</h2>
+                <p>You are now a <span class="badge">PRO</span> member</p>
+                <p style="color:#64748b">Unlimited queries. Full access. No limits.</p>
+                <p style="margin-top:40px;color:#94a3b8">Close this tab and continue using Recall.</p>
+            </div>
+        </body>
+        </html>
+        """
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
