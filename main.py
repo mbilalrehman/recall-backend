@@ -481,44 +481,26 @@ def create_checkout(user_id: int = Depends(get_user_id)):
 
 @app.get("/payment-success", response_class=HTMLResponse)
 def payment_success(session_id: str = None):
-    try:
-        if session_id:
-            session = stripe.checkout.Session.retrieve(session_id)
-            user_id = int(session.metadata.get("user_id"))
-            conn = get_db()
-            conn.execute(
-                "UPDATE users SET plan='pro' WHERE id=?",
-                (user_id,)
-            )
-            conn.commit()
-            conn.close()
-        
-        return """
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <title>Payment Successful</title>
-            <style>
-                body { font-family: Arial; background: #0f172a; color: white; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
-                .box { text-align: center; background: #1e293b; padding: 60px; border-radius: 16px; }
-                h1 { color: #4ade80; font-size: 48px; }
-                p { color: #94a3b8; font-size: 18px; margin: 20px 0; }
-                .badge { background: #14532d; color: #4ade80; padding: 8px 24px; border-radius: 20px; font-size: 16px; font-weight: bold; }
-            </style>
-        </head>
-        <body>
-            <div class="box">
-                <h1>🎉</h1>
-                <h2 style="color:#4ade80">Payment Successful!</h2>
-                <p>You are now a <span class="badge">PRO</span> member</p>
-                <p style="color:#64748b">Unlimited queries. Full access. No limits.</p>
-                <p style="margin-top:40px;color:#94a3b8">Close this tab and continue using Recall.</p>
-            </div>
-        </body>
-        </html>
-        """
-    except Exception as e:
-        return f"<h1>Error: {e}</h1>"
+    return """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Payment Successful</title>
+        <style>
+            body { font-family: Arial; background: #0f172a; color: white; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+            .box { text-align: center; background: #1e293b; padding: 60px; border-radius: 16px; }
+        </style>
+    </head>
+    <body>
+        <div class="box">
+            <h1>🎉</h1>
+            <h2 style="color:#4ade80">Payment Successful!</h2>
+            <p style="color:#94a3b8">You are now a PRO member</p>
+            <p style="color:#64748b">Close this tab and continue using Recall.</p>
+        </div>
+    </body>
+    </html>
+    """
 
 @app.get("/payment-cancel")
 def payment_cancel():
