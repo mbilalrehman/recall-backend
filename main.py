@@ -480,17 +480,19 @@ def create_checkout(user_id: int = Depends(get_user_id)):
 
 
 @app.get("/payment-success", response_class=HTMLResponse)
-def payment_success(session_id: str):
+def payment_success(session_id: str = None):
     try:
-        session = stripe.checkout.Session.retrieve(session_id)
-        user_id = int(session.metadata.get("user_id"))
-        conn = get_db()
-        conn.execute(
-            "UPDATE users SET plan='pro' WHERE id=?",
-            (user_id,)
-        )
-        conn.commit()
-        conn.close()
+        if session_id:
+            session = stripe.checkout.Session.retrieve(session_id)
+            user_id = int(session.metadata.get("user_id"))
+            conn = get_db()
+            conn.execute(
+                "UPDATE users SET plan='pro' WHERE id=?",
+                (user_id,)
+            )
+            conn.commit()
+            conn.close()
+        
         return """
         <!DOCTYPE html>
         <html>
@@ -516,7 +518,7 @@ def payment_success(session_id: str):
         </html>
         """
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        return f"<h1>Error: {e}</h1>"
 
 @app.get("/payment-cancel")
 def payment_cancel():
