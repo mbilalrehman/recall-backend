@@ -290,9 +290,9 @@ def payment_success(session_id: str = None):
             )
             conn.commit()
             conn.close()
-        except:
-            pass
-
+        except Exception as e:
+            print(f"STRIPE ERROR: {e}")
+       
     return """<!DOCTYPE html>
 <html>
 <head>
