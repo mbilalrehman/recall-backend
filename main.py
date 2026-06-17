@@ -155,20 +155,29 @@ class QueryRequest(BaseModel):
 def query(req: QueryRequest, user_id: int = Depends(get_user_id)):
     conn = get_db()
 
-    # Check free limit
     cursor = conn.execute(
-        "SELECT plan, queries_used FROM users WHERE id=?", (user_id,)
+        "SELECT plan, queries_used, is_banned FROM users WHERE id=?", (user_id,)
     )
     user = cursor.fetchone()
 
+    # Ban check
+    if user[2] == 1:
+        conn.close()
+        raise HTTPException(
+            status_code=403,
+            detail="Your account has been banned."
+        )
+
+    # Free limit — 50 queries
     if user[0] == 'free' and user[1] >= 50:
         conn.close()
         raise HTTPException(
             status_code=429,
-            detail="Free limit reached. Upgrade to Pro — $12/month"
+            detail="Free limit reached (50/month). Upgrade: recall --upgrade"
         )
 
-    # Get user history
+    # Pro limit — unlimited
+    # Get history
     cursor = conn.execute(
         "SELECT query, command FROM memory WHERE user_id=? ORDER BY timestamp DESC LIMIT 5",
         (user_id,)
@@ -185,25 +194,18 @@ def query(req: QueryRequest, user_id: int = Depends(get_user_id)):
         messages=[{
             "role": "user",
             "content": f"""You are a terminal expert on {req.os_type}.
-
-History:
-{history_text}
-
-User asks: '{req.query}'
-
-Reply with ONLY the exact command. No explanation. No backticks."""
+            History: {history_text}
+            User asks: '{req.query}'
+            Reply with ONLY the exact command. No explanation. No backticks."""
         }]
     )
 
     command = message.content[0].text.strip()
 
-    # Save to memory
     conn.execute(
         "INSERT INTO memory VALUES (?, ?, ?, datetime('now'))",
         (user_id, req.query, command)
     )
-
-    # Update query count
     conn.execute(
         "UPDATE users SET queries_used = queries_used + 1 WHERE id=?",
         (user_id,)
@@ -211,7 +213,12 @@ Reply with ONLY the exact command. No explanation. No backticks."""
     conn.commit()
     conn.close()
 
-    return {"command": command}
+    return {
+        "command": command,
+        "plan": user[0],
+        "queries_used": user[1] + 1,
+        "limit": "unlimited" if user[0] == 'pro' else f"{user[1]+1}/50"
+    }
 
 # ══════════════════════════════════════
 # HEALTH CHECK
