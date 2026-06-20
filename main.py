@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Depends, Header
+from fastapi import FastAPI, HTTPException, Depends, Header, Request
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 import anthropic
@@ -23,6 +23,7 @@ ANTHROPIC_KEY = os.getenv("ANTHROPIC_API_KEY")
 JWT_SECRET = os.getenv("JWT_SECRET", "recall-secret-key-2026")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123")
 STRIPE_PRICE_ID = os.getenv("STRIPE_PRICE_ID", "price_1TfRiDIjAxibchSEuB7L0Iy8")
+STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")
 BASE_URL = os.getenv("BASE_URL", "http://100.53.1.66:8000")
 
 stripe.api_key = os.getenv("STRIPE_SECRET_KEY")
@@ -111,17 +112,22 @@ class PlanRequest(BaseModel):
 
 @app.post("/signup")
 def signup(req: SignupRequest):
+    if not req.email or "@" not in req.email:
+        raise HTTPException(status_code=400, detail="Invalid email")
+    if len(req.password) < 6:
+        raise HTTPException(status_code=400, detail="Password too short (min 6 chars)")
+
     conn = get_db()
     hashed = bcrypt.hashpw(req.password.encode(), bcrypt.gensalt())
     try:
         cursor = conn.execute(
             "INSERT INTO users (email, password) VALUES (?, ?)",
-            (req.email, hashed.decode())
+            (req.email.strip().lower(), hashed.decode())
         )
         conn.commit()
         user_id = cursor.lastrowid
         token = create_token(user_id)
-        return {"token": token, "message": "Welcome to Recall!"}
+        return {"token": token, "message": "Welcome to Recall!", "plan": "free"}
     except sqlite3.IntegrityError:
         raise HTTPException(status_code=400, detail="Email already exists")
     finally:
@@ -131,8 +137,8 @@ def signup(req: SignupRequest):
 def login(req: LoginRequest):
     conn = get_db()
     cursor = conn.execute(
-        "SELECT id, password, plan, queries_used FROM users WHERE email=?",
-        (req.email,)
+        "SELECT id, password, plan, queries_used, is_banned FROM users WHERE email=?",
+        (req.email.strip().lower(),)
     )
     user = cursor.fetchone()
     conn.close()
@@ -142,6 +148,9 @@ def login(req: LoginRequest):
 
     if not bcrypt.checkpw(req.password.encode(), user[1].encode()):
         raise HTTPException(status_code=401, detail="Wrong password")
+
+    if user[4] == 1:
+        raise HTTPException(status_code=403, detail="Account banned")
 
     token = create_token(user[0])
     return {
@@ -168,7 +177,7 @@ def query(req: QueryRequest, user_id: int = Depends(get_user_id)):
 
     if user[2] == 1:
         conn.close()
-        raise HTTPException(status_code=403, detail="Your account has been banned.")
+        raise HTTPException(status_code=403, detail="Account banned")
 
     if user[0] == 'free' and user[1] >= 50:
         conn.close()
@@ -258,6 +267,9 @@ def create_checkout(user_id: int = Depends(get_user_id)):
         user = cursor.fetchone()
         conn.close()
 
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
         if user[1] == 'pro':
             raise HTTPException(status_code=400, detail="Already Pro!")
 
@@ -276,9 +288,39 @@ def create_checkout(user_id: int = Depends(get_user_id)):
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+@app.post("/stripe-webhook")
+async def stripe_webhook(request: Request):
+    payload = await request.body()
+    sig_header = request.headers.get("stripe-signature")
+
+    try:
+        if STRIPE_WEBHOOK_SECRET:
+            event = stripe.Webhook.construct_event(
+                payload, sig_header, STRIPE_WEBHOOK_SECRET
+            )
+        else:
+            event = json.loads(payload)
+
+        if event["type"] == "checkout.session.completed":
+            session = event["data"]["object"]
+            user_id = int(session["metadata"]["user_id"])
+            conn = get_db()
+            conn.execute(
+                "UPDATE users SET plan='pro', queries_used=0 WHERE id=?",
+                (user_id,)
+            )
+            conn.commit()
+            conn.close()
+            print(f"User {user_id} upgraded to Pro!")
+
+    except Exception as e:
+        print(f"Webhook error: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+
+    return {"status": "ok"}
+
 @app.get("/payment-success", response_class=HTMLResponse)
 def payment_success(session_id: str = None):
-    # DB update
     if session_id:
         try:
             session = stripe.checkout.Session.retrieve(session_id)
@@ -290,9 +332,10 @@ def payment_success(session_id: str = None):
             )
             conn.commit()
             conn.close()
+            print(f"Payment success: User {user_id} upgraded to Pro!")
         except Exception as e:
-            print(f"STRIPE ERROR: {e}")
-       
+            print(f"Payment success error: {e}")
+
     return """<!DOCTYPE html>
 <html>
 <head>
@@ -363,9 +406,10 @@ def admin_panel():
     <style>
         * { margin:0; padding:0; box-sizing:border-box; }
         body { font-family: Arial; background: #0f172a; color: #e2e8f0; }
-        .header { background: #1e3a8a; padding: 20px 40px; display:flex; justify-content:space-between; align-items:center; }
+        .header { background: #1e3a8a; padding: 20px 40px; }
         .header h1 { color: #38bdf8; font-size: 24px; }
         .login-box { max-width:400px; margin:100px auto; background:#1e293b; padding:40px; border-radius:12px; }
+        .login-box h2 { margin-bottom:20px; color:#38bdf8; }
         input { width:100%; padding:12px; margin:10px 0; background:#0f172a; border:1px solid #334155; border-radius:8px; color:white; font-size:16px; }
         button { width:100%; padding:12px; background:#2563eb; color:white; border:none; border-radius:8px; font-size:16px; cursor:pointer; margin-top:10px; }
         button:hover { background:#1d4ed8; }
@@ -397,7 +441,7 @@ def admin_panel():
 
     <div class="dashboard" id="dashboard">
         <div class="stats" id="stats"></div>
-        <p style="font-size:20px;font-weight:bold;margin-bottom:20px">All Users</p>
+        <p style="font-size:20px;font-weight:bold;margin-bottom:20px;margin-top:20px">All Users</p>
         <table>
             <thead><tr><th>#</th><th>Email</th><th>Plan</th><th>Queries</th><th>Joined</th><th>Actions</th></tr></thead>
             <tbody id="users-table"></tbody>
@@ -406,10 +450,9 @@ def admin_panel():
 
     <script>
         let adminPass = '';
-
         async function login() {
             adminPass = document.getElementById('password').value;
-            const res = await fetch('/admin/stats', { headers: {'X-Admin-Password': adminPass} });
+            const res = await fetch('/admin/stats', {headers:{'X-Admin-Password':adminPass}});
             if (res.ok) {
                 document.getElementById('login-box').style.display = 'none';
                 document.getElementById('dashboard').style.display = 'block';
@@ -418,7 +461,6 @@ def admin_panel():
                 document.getElementById('error').innerText = 'Wrong password!';
             }
         }
-
         async function loadDashboard() {
             const stats = await fetch('/admin/stats', {headers:{'X-Admin-Password':adminPass}}).then(r=>r.json());
             document.getElementById('stats').innerHTML = `
@@ -441,12 +483,11 @@ def admin_panel():
                             : `<button class="ban-btn" onclick="banUser(${u.id},true)">Ban</button>`}
                         ${u.plan !== 'pro'
                             ? `<button class="pro-btn" onclick="setPro(${u.id})">Set Pro</button>`
-                            : ''}
+                            : `<button class="pro-btn" style="background:#374151" onclick="setFree(${u.id})">Set Free</button>`}
                     </td>
                 </tr>
             `).join('');
         }
-
         async function banUser(userId, ban) {
             await fetch('/admin/ban', {
                 method:'POST',
@@ -455,7 +496,6 @@ def admin_panel():
             });
             loadDashboard();
         }
-
         async function setPro(userId) {
             await fetch('/admin/set-plan', {
                 method:'POST',
@@ -464,8 +504,15 @@ def admin_panel():
             });
             loadDashboard();
         }
-
-        document.getElementById('password').addEventListener('keypress', e => { if(e.key==='Enter') login(); });
+        async function setFree(userId) {
+            await fetch('/admin/set-plan', {
+                method:'POST',
+                headers:{'X-Admin-Password':adminPass,'Content-Type':'application/json'},
+                body: JSON.stringify({user_id:userId, plan:'free'})
+            });
+            loadDashboard();
+        }
+        document.getElementById('password').addEventListener('keypress', e => {if(e.key==='Enter') login();});
     </script>
 </body>
 </html>"""
@@ -480,7 +527,12 @@ def admin_stats(_ = Depends(admin_auth)):
         "SELECT COUNT(*) FROM memory WHERE date(timestamp)=date('now')"
     ).fetchone()[0]
     conn.close()
-    return {"total_users":total_users,"total_queries":total_queries,"pro_users":pro_users,"today_queries":today_queries}
+    return {
+        "total_users": total_users,
+        "total_queries": total_queries,
+        "pro_users": pro_users,
+        "today_queries": today_queries
+    }
 
 @app.get("/admin/users")
 def admin_users(_ = Depends(admin_auth)):
