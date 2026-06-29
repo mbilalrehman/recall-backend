@@ -57,7 +57,7 @@ async def stripe_webhook(request: Request):
 
 @router.get("/payment-success", response_class=HTMLResponse)
 def payment_success(session_id: str = None):
-    if session_id:
+    if session_id and session_id != "get":
         try:
             session = stripe.checkout.Session.retrieve(session_id)
             user_id = int(session.metadata.get("user_id"))
