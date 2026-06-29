@@ -57,16 +57,20 @@ async def stripe_webhook(request: Request):
 
 @router.get("/payment-success", response_class=HTMLResponse)
 def payment_success(session_id: str = None):
-    if session_id and session_id != "get":
+    if session_id and len(session_id) > 10:
         try:
             session = stripe.checkout.Session.retrieve(session_id)
             user_id = int(session.metadata.get("user_id"))
             conn = get_db()
-            conn.execute("UPDATE users SET plan='pro', queries_used=0 WHERE id=?", (user_id,))
+            conn.execute(
+                "UPDATE users SET plan='pro', queries_used=0 WHERE id=?",
+                (user_id,)
+            )
             conn.commit()
             conn.close()
+            print(f"✅ User {user_id} upgraded to Pro!")
         except Exception as e:
-            print(f"Payment success error: {e}")
+            print(f"❌ Payment error: {e}")
 
     return """<!DOCTYPE html>
 <html>
